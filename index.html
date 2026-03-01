@@ -439,9 +439,12 @@
         document.getElementById('tokenInput').value = savedToken;
       }
 
-      // Step 1: Viewer を基本設定で作成（失敗しにくい構成）
+      // Step 1: Viewer を Ion に依存せず作成
+      // baseLayer: false で Ion 画像を読み込まない → 手動で OSM タイルを追加
       try {
         viewer = new Cesium.Viewer('cesiumContainer', {
+          baseLayer: false,
+          baseLayerPicker: false,
           animation: false,
           timeline: false,
           fullscreenButton: false,
@@ -452,14 +455,22 @@
           selectionIndicator: true,
           navigationHelpButton: false,
           sceneModePicker: true,
-          baseLayerPicker: false,
           requestRenderMode: false,
           maximumRenderTimeChange: Infinity,
         });
+
+        // OpenStreetMap タイルを基本レイヤーとして追加（APIキー不要）
+        viewer.imageryLayers.addImageryProvider(
+          new Cesium.UrlTemplateImageryProvider({
+            url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+            maximumLevel: 19,
+            credit: new Cesium.Credit('© OpenStreetMap contributors'),
+          })
+        );
       } catch (err) {
         console.error('Viewer 作成失敗:', err);
         document.querySelector('.loading-text').textContent =
-          'Viewer の作成に失敗しました。ブラウザが WebGL に対応しているか確認してください。';
+          'Viewer の作成に失敗しました: ' + err.message;
         return;
       }
 
