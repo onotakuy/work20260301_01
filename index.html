@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>3Dマップビューア - Google Earth データ対応</title>
+  <title>3Dマップビューア - PLATEAU 3D都市モデル対応</title>
   <script src="https://cesium.com/downloads/cesiumjs/releases/1.124/Build/Cesium/Cesium.js"></script>
   <link href="https://cesium.com/downloads/cesiumjs/releases/1.124/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
   <style>
@@ -235,6 +235,62 @@
     .token-help a { color: #5588cc; text-decoration: none; }
     .token-help a:hover { text-decoration: underline; }
 
+    /* PLATEAU セクション */
+    .plateau-category {
+      margin-bottom: 8px;
+    }
+    .plateau-category-title {
+      font-size: 11px; font-weight: 600; color: #99aabb;
+      margin-bottom: 6px; padding-bottom: 4px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .plateau-item {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 8px; border-radius: 4px; margin-bottom: 3px;
+      background: rgba(255,255,255,0.04); font-size: 12px;
+      transition: background 0.2s;
+    }
+    .plateau-item:hover { background: rgba(255,255,255,0.08); }
+    .plateau-item .plateau-info { flex: 1; min-width: 0; }
+    .plateau-item .plateau-name { color: #ccd; font-weight: 500; }
+    .plateau-item .plateau-detail { font-size: 10px; color: #667; margin-top: 1px; }
+    .plateau-item .plateau-load-btn {
+      padding: 4px 10px; border-radius: 4px; border: 1px solid rgba(100,150,255,0.3);
+      background: rgba(100,150,255,0.1); color: #7ab; cursor: pointer;
+      font-size: 11px; white-space: nowrap; transition: all 0.2s;
+    }
+    .plateau-item .plateau-load-btn:hover { background: rgba(100,150,255,0.25); color: #9cf; }
+    .plateau-item .plateau-load-btn.loaded { background: rgba(255,80,80,0.1); border-color: rgba(255,80,80,0.3); color: #f88; }
+    .plateau-item .plateau-load-btn.loading { opacity: 0.5; pointer-events: none; }
+
+    .plateau-custom-url {
+      display: flex; gap: 4px; margin-top: 8px;
+    }
+    .plateau-custom-url input {
+      flex: 1; padding: 6px 8px; border-radius: 4px;
+      background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12);
+      color: #fff; font-size: 11px; font-family: monospace; outline: none;
+    }
+    .plateau-custom-url input:focus { border-color: rgba(100,150,255,0.5); }
+    .plateau-custom-url button {
+      padding: 6px 10px; border-radius: 4px; border: none;
+      background: #2563eb; color: #fff; cursor: pointer; font-size: 11px;
+      white-space: nowrap;
+    }
+    .plateau-custom-url button:hover { background: #3b82f6; }
+    .plateau-loaded-list { margin-top: 8px; }
+    .plateau-loaded-item {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 5px 8px; border-radius: 4px; margin-bottom: 3px;
+      background: rgba(100,150,255,0.06); font-size: 11px;
+    }
+    .plateau-loaded-item .name { color: #aab; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .plateau-loaded-item .remove-btn {
+      background: none; border: none; color: #f55; cursor: pointer;
+      font-size: 14px; padding: 0 4px; opacity: 0.6;
+    }
+    .plateau-loaded-item .remove-btn:hover { opacity: 1; }
+
     /* Cesium UI カスタマイズ */
     .cesium-viewer-bottom { display: none !important; }
     .cesium-viewer-toolbar { right: 60px !important; }
@@ -257,7 +313,7 @@
 
     <div class="sidebar-header">
       <h1>3Dマップビューア</h1>
-      <p>Google Earth データ対応 ・ KML / KMZ / GeoJSON</p>
+      <p>PLATEAU 3D都市モデル ・ KML / KMZ / GeoJSON</p>
     </div>
 
     <div class="token-section" id="tokenSection">
@@ -297,6 +353,38 @@
         </div>
         <input type="file" id="fileInput" accept=".kml,.kmz,.json,.geojson,.czml" multiple />
         <div class="import-list" id="importList"></div>
+      </div>
+
+      <!-- PLATEAU 3D都市モデル -->
+      <div class="section">
+        <div class="section-title">&#127963; PLATEAU 3D都市モデル</div>
+
+        <div class="toggle-row">
+          <label for="togglePlateauOrtho">航空写真（PLATEAU Ortho）</label>
+          <div class="toggle-switch">
+            <input type="checkbox" id="togglePlateauOrtho" />
+            <div class="toggle-slider"></div>
+          </div>
+        </div>
+
+        <div class="plateau-category">
+          <div class="plateau-category-title">東京都</div>
+          <div id="plateauTokyoList"></div>
+        </div>
+
+        <div class="plateau-category">
+          <div class="plateau-category-title">その他の都市</div>
+          <div id="plateauOtherList"></div>
+        </div>
+
+        <div class="plateau-category">
+          <div class="plateau-category-title">カスタムURL</div>
+          <div class="plateau-custom-url">
+            <input type="text" id="plateauCustomUrl" placeholder="tileset.json の URL を入力..." />
+            <button id="plateauCustomLoadBtn">読込</button>
+          </div>
+          <div class="plateau-loaded-list" id="plateauCustomList"></div>
+        </div>
       </div>
 
       <!-- 表示設定 -->
@@ -399,10 +487,39 @@
     ];
 
     // ============================================================
+    // PLATEAU 3D都市モデル データセット
+    // ============================================================
+    const PLATEAU_DATASETS = {
+      tokyo: [
+        {
+          name: '千代田区', detail: 'LOD1 建築物 (2023)',
+          url: 'https://assets.cms.plateau.reearth.io/assets/0e/e5948a-e95c-4e31-be85-1f8c066ed996/13101_chiyoda-ku_pref_2023_citygml_1_op_bldg_3dtiles_13101_chiyoda-ku_lod1/tileset.json',
+          lon: 139.7539, lat: 35.6940, height: 1500,
+        },
+        {
+          name: '新宿区', detail: 'LOD2 建築物 (2023)',
+          url: 'https://assets.cms.plateau.reearth.io/assets/ad/52340f-3f7f-470e-918e-38eb9c27e2db/13104_shinjuku-ku_pref_2023_citygml_2_op_bldg_3dtiles_13104_shinjuku-ku_lod2/tileset.json',
+          lon: 139.7036, lat: 35.6938, height: 1500,
+        },
+      ],
+      other: [
+        {
+          name: '札幌市中央区', detail: 'LOD1 建築物 (2020)',
+          url: 'https://assets.cms.plateau.reearth.io/assets/b8/314602-4b39-4d5f-be2d-a0b17a3e3c21/01100_sapporo-shi_city_2020_citygml_6_op_bldg_3dtiles_01101_chuo-ku_lod1/tileset.json',
+          lon: 141.3545, lat: 43.0621, height: 2000,
+        },
+      ],
+    };
+
+    const PLATEAU_ORTHO_URL = 'https://api.plateauview.mlit.go.jp/tiles/plateau-ortho-2023/{z}/{x}/{y}.png';
+
+    // ============================================================
     // グローバル変数
     // ============================================================
     let viewer, osmBuildings, dataSources = [];
     let hasIonToken = false;
+    let plateauTilesets = {}; // key: url, value: { tileset, name }
+    let plateauOrthoLayer = null;
 
     // ============================================================
     // トークン管理
@@ -493,6 +610,7 @@
 
       setupEventHandlers();
       buildPresetButtons();
+      buildPlateauUI();
       hideLoading();
     }
 
@@ -845,6 +963,160 @@
       const overlay = document.getElementById('loading-overlay');
       overlay.classList.add('hidden');
       setTimeout(() => overlay.remove(), 500);
+    }
+
+    // ============================================================
+    // PLATEAU 3D都市モデル
+    // ============================================================
+    function buildPlateauUI() {
+      buildPlateauList('plateauTokyoList', PLATEAU_DATASETS.tokyo);
+      buildPlateauList('plateauOtherList', PLATEAU_DATASETS.other);
+
+      // オルソ画像トグル
+      document.getElementById('togglePlateauOrtho').addEventListener('change', (e) => {
+        if (e.target.checked) {
+          enablePlateauOrtho();
+        } else {
+          disablePlateauOrtho();
+        }
+      });
+
+      // カスタムURL読込
+      document.getElementById('plateauCustomLoadBtn').addEventListener('click', loadPlateauCustomUrl);
+      document.getElementById('plateauCustomUrl').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') loadPlateauCustomUrl();
+      });
+    }
+
+    function buildPlateauList(containerId, datasets) {
+      const container = document.getElementById(containerId);
+      datasets.forEach(ds => {
+        const item = document.createElement('div');
+        item.className = 'plateau-item';
+        item.innerHTML = `
+          <div class="plateau-info">
+            <div class="plateau-name">${ds.name}</div>
+            <div class="plateau-detail">${ds.detail}</div>
+          </div>
+          <button class="plateau-load-btn" data-url="${ds.url}">読込</button>
+        `;
+        const btn = item.querySelector('.plateau-load-btn');
+        btn.addEventListener('click', () => togglePlateauTileset(ds, btn));
+
+        // 名前クリックでフライ移動
+        item.querySelector('.plateau-info').style.cursor = 'pointer';
+        item.querySelector('.plateau-info').addEventListener('click', () => {
+          viewer.camera.flyTo({
+            destination: Cesium.Cartesian3.fromDegrees(ds.lon, ds.lat, ds.height),
+            orientation: { heading: 0, pitch: Cesium.Math.toRadians(-35), roll: 0 },
+            duration: 2,
+          });
+        });
+
+        container.appendChild(item);
+      });
+    }
+
+    async function togglePlateauTileset(ds, btn) {
+      const url = ds.url;
+      if (plateauTilesets[url]) {
+        // 削除
+        viewer.scene.primitives.remove(plateauTilesets[url].tileset);
+        delete plateauTilesets[url];
+        btn.textContent = '読込';
+        btn.classList.remove('loaded');
+        showInfo(`${ds.name} を非表示にしました`);
+      } else {
+        // 読込
+        btn.textContent = '読込中...';
+        btn.classList.add('loading');
+        try {
+          const tileset = await Cesium.Cesium3DTileset.fromUrl(url);
+          viewer.scene.primitives.add(tileset);
+          plateauTilesets[url] = { tileset, name: ds.name };
+          btn.textContent = '削除';
+          btn.classList.remove('loading');
+          btn.classList.add('loaded');
+          viewer.camera.flyTo({
+            destination: Cesium.Cartesian3.fromDegrees(ds.lon, ds.lat, ds.height),
+            orientation: { heading: 0, pitch: Cesium.Math.toRadians(-35), roll: 0 },
+            duration: 2,
+          });
+          showInfo(`${ds.name} の3D都市モデルを表示しました`);
+        } catch (err) {
+          console.error('PLATEAU 3D Tiles 読み込みエラー:', err);
+          btn.textContent = '読込';
+          btn.classList.remove('loading');
+          showInfo(`エラー: ${ds.name} の読み込みに失敗しました`);
+        }
+      }
+    }
+
+    function enablePlateauOrtho() {
+      if (plateauOrthoLayer) return;
+      try {
+        plateauOrthoLayer = viewer.imageryLayers.addImageryProvider(
+          new Cesium.UrlTemplateImageryProvider({
+            url: PLATEAU_ORTHO_URL,
+            maximumLevel: 19,
+            credit: new Cesium.Credit('PLATEAU 航空写真（国土交通省）'),
+          })
+        );
+        showInfo('PLATEAU 航空写真を表示しました');
+      } catch (err) {
+        console.error('PLATEAU Ortho エラー:', err);
+        showInfo('航空写真の読み込みに失敗しました');
+        document.getElementById('togglePlateauOrtho').checked = false;
+      }
+    }
+
+    function disablePlateauOrtho() {
+      if (plateauOrthoLayer) {
+        viewer.imageryLayers.remove(plateauOrthoLayer);
+        plateauOrthoLayer = null;
+        showInfo('PLATEAU 航空写真を非表示にしました');
+      }
+    }
+
+    async function loadPlateauCustomUrl() {
+      const input = document.getElementById('plateauCustomUrl');
+      const url = input.value.trim();
+      if (!url) {
+        showInfo('URLを入力してください');
+        return;
+      }
+      if (plateauTilesets[url]) {
+        showInfo('このデータは既に読み込まれています');
+        return;
+      }
+
+      showInfo('カスタム3D Tilesを読込中...');
+      try {
+        const tileset = await Cesium.Cesium3DTileset.fromUrl(url);
+        viewer.scene.primitives.add(tileset);
+        const name = url.split('/').slice(-2, -1)[0] || 'カスタムデータ';
+        plateauTilesets[url] = { tileset, name };
+        input.value = '';
+
+        // リストに追加
+        const list = document.getElementById('plateauCustomList');
+        const item = document.createElement('div');
+        item.className = 'plateau-loaded-item';
+        item.innerHTML = `<span class="name" title="${name}">${name}</span><button class="remove-btn" title="削除">&times;</button>`;
+        item.querySelector('.remove-btn').addEventListener('click', () => {
+          viewer.scene.primitives.remove(tileset);
+          delete plateauTilesets[url];
+          item.remove();
+          showInfo(`${name} を削除しました`);
+        });
+        list.appendChild(item);
+
+        viewer.flyTo(tileset, { duration: 2 });
+        showInfo(`カスタム3D Tilesを表示しました`);
+      } catch (err) {
+        console.error('カスタム3D Tiles エラー:', err);
+        showInfo('エラー: 3D Tilesの読み込みに失敗しました - URLを確認してください');
+      }
     }
 
     // ============================================================
