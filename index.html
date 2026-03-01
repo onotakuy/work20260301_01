@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3Dマップビューア - Google Earth データ対応</title>
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.124/Build/Cesium/Cesium.js"></script>
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.124/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; font-family: 'Segoe UI', 'Hiragino Sans', 'Meiryo', sans-serif; }
+    #cesiumContainer { width: 100%; height: 100%; }
+
+    /* サイドパネル */
+    #sidebar {
+      position: absolute; top: 0; left: 0; width: 320px; height: 100%;
+      background: rgba(20, 24, 36, 0.92); color: #e0e0e0;
+      backdrop-filter: blur(12px); z-index: 100;
+      display: flex; flex-direction: column;
+      box-shadow: 4px 0 24px rgba(0,0,0,0.4);
+      transition: transform 0.3s ease;
+    }
+    #sidebar.collapsed { transform: translateX(-320px); }
+
+    #sidebar-toggle {
+      position: absolute; top: 12px; right: -44px;
+      width: 40px; height: 40px;
+      background: rgba(20, 24, 36, 0.9); border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 0 8px 8px 0; color: #e0e0e0;
+      cursor: pointer; font-size: 18px;
+      display: flex; align-items: center; justify-content: center;
+      transition: background 0.2s;
+    }
+    #sidebar-toggle:hover { background: rgba(40, 50, 70, 0.95); }
+
+    .sidebar-header {
+      padding: 16px 20px; border-bottom: 1px solid rgba(255,255,255,0.1);
+      background: rgba(30, 60, 120, 0.3);
+    }
+    .sidebar-header h1 { font-size: 18px; font-weight: 600; color: #fff; }
+    .sidebar-header p { font-size: 11px; color: #8899bb; margin-top: 4px; }
+
+    .sidebar-content { flex: 1; overflow-y: auto; padding: 16px; }
+    .sidebar-content::-webkit-scrollbar { width: 6px; }
+    .sidebar-content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 3px; }
+
+    .section { margin-bottom: 20px; }
+    .section-title {
+      font-size: 12px; font-weight: 600; text-transform: uppercase;
+      color: #7799cc; letter-spacing: 0.5px; margin-bottom: 10px;
+      display: flex; align-items: center; gap: 6px;
+    }
+
+    /* 検索 */
+    .search-box {
+      display: flex; gap: 6px; margin-bottom: 8px;
+    }
+    .search-box input {
+      flex: 1; padding: 8px 12px; border-radius: 6px;
+      background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12);
+      color: #fff; font-size: 13px; outline: none;
+      transition: border-color 0.2s;
+    }
+    .search-box input:focus { border-color: rgba(100,150,255,0.5); }
+    .search-box input::placeholder { color: #667; }
+    .search-box button {
+      padding: 8px 14px; border-radius: 6px;
+      background: #2563eb; border: none; color: #fff;
+      cursor: pointer; font-size: 13px; white-space: nowrap;
+      transition: background 0.2s;
+    }
+    .search-box button:hover { background: #3b82f6; }
+
+    /* プリセット */
+    .preset-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+    }
+    .preset-btn {
+      padding: 8px 10px; border-radius: 6px;
+      background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08);
+      color: #ccd; cursor: pointer; font-size: 12px;
+      text-align: left; transition: all 0.2s;
+    }
+    .preset-btn:hover { background: rgba(100,150,255,0.15); border-color: rgba(100,150,255,0.3); }
+    .preset-btn .preset-name { font-weight: 600; color: #fff; }
+    .preset-btn .preset-desc { font-size: 10px; color: #889; margin-top: 2px; }
+
+    /* ファイルインポート */
+    .file-drop-zone {
+      border: 2px dashed rgba(255,255,255,0.15); border-radius: 8px;
+      padding: 20px; text-align: center; cursor: pointer;
+      transition: all 0.2s; margin-bottom: 8px;
+    }
+    .file-drop-zone:hover, .file-drop-zone.dragover {
+      border-color: rgba(100,150,255,0.5); background: rgba(100,150,255,0.08);
+    }
+    .file-drop-zone .icon { font-size: 28px; margin-bottom: 6px; }
+    .file-drop-zone .text { font-size: 12px; color: #889; }
+    .file-drop-zone .formats { font-size: 10px; color: #556; margin-top: 4px; }
+    #fileInput { display: none; }
+
+    /* インポートリスト */
+    .import-list { max-height: 150px; overflow-y: auto; }
+    .import-item {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 8px; border-radius: 4px; margin-bottom: 4px;
+      background: rgba(255,255,255,0.04); font-size: 12px;
+    }
+    .import-item .name { color: #aab; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .import-item .remove-btn {
+      background: none; border: none; color: #f55; cursor: pointer;
+      font-size: 14px; padding: 0 4px; opacity: 0.6;
+    }
+    .import-item .remove-btn:hover { opacity: 1; }
+
+    /* コントロール */
+    .control-group { margin-bottom: 12px; }
+    .control-label {
+      font-size: 11px; color: #889; margin-bottom: 4px;
+      display: flex; justify-content: space-between;
+    }
+    .control-label span { color: #aab; }
+    input[type="range"] {
+      width: 100%; height: 4px; -webkit-appearance: none;
+      background: rgba(255,255,255,0.12); border-radius: 2px; outline: none;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 14px; height: 14px;
+      background: #3b82f6; border-radius: 50%; cursor: pointer;
+    }
+
+    .toggle-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 0;
+    }
+    .toggle-row label { font-size: 12px; color: #aab; cursor: pointer; }
+    .toggle-switch {
+      position: relative; width: 36px; height: 20px;
+    }
+    .toggle-switch input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(255,255,255,0.15); border-radius: 10px;
+      cursor: pointer; transition: 0.3s;
+    }
+    .toggle-slider::before {
+      content: ''; position: absolute; width: 16px; height: 16px;
+      left: 2px; bottom: 2px; background: #fff; border-radius: 50%;
+      transition: 0.3s;
+    }
+    .toggle-switch input:checked + .toggle-slider { background: #2563eb; }
+    .toggle-switch input:checked + .toggle-slider::before { transform: translateX(16px); }
+
+    .btn-row { display: flex; gap: 6px; margin-top: 8px; }
+    .btn {
+      flex: 1; padding: 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1);
+      background: rgba(255,255,255,0.06); color: #ccd;
+      cursor: pointer; font-size: 12px; transition: all 0.2s;
+    }
+    .btn:hover { background: rgba(255,255,255,0.12); }
+    .btn-primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+    .btn-primary:hover { background: #3b82f6; }
+    .btn-danger { border-color: rgba(255,80,80,0.3); color: #f88; }
+    .btn-danger:hover { background: rgba(255,80,80,0.15); }
+
+    /* 情報パネル */
+    #info-panel {
+      position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%);
+      background: rgba(20, 24, 36, 0.9); color: #e0e0e0;
+      padding: 8px 16px; border-radius: 8px; font-size: 12px;
+      backdrop-filter: blur(8px); z-index: 90;
+      border: 1px solid rgba(255,255,255,0.1);
+      pointer-events: none; opacity: 0; transition: opacity 0.3s;
+    }
+    #info-panel.visible { opacity: 1; }
+
+    /* ローディング */
+    #loading-overlay {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(10, 14, 24, 0.95); z-index: 1000;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      transition: opacity 0.5s;
+    }
+    #loading-overlay.hidden { opacity: 0; pointer-events: none; }
+    .loading-spinner {
+      width: 48px; height: 48px; border: 3px solid rgba(255,255,255,0.1);
+      border-top-color: #3b82f6; border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-text { color: #8899bb; font-size: 14px; margin-top: 16px; }
+
+    /* 座標表示 */
+    #coords-display {
+      position: absolute; bottom: 8px; right: 8px;
+      background: rgba(20, 24, 36, 0.85); color: #aab;
+      padding: 4px 10px; border-radius: 4px; font-size: 11px;
+      font-family: 'Consolas', monospace; z-index: 90;
+    }
+
+    /* スクリーンショットボタン */
+    #screenshot-btn {
+      position: absolute; top: 12px; right: 12px;
+      width: 40px; height: 40px;
+      background: rgba(20, 24, 36, 0.9); border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 8px; color: #e0e0e0; cursor: pointer;
+      font-size: 18px; display: flex; align-items: center; justify-content: center;
+      z-index: 90; transition: background 0.2s;
+    }
+    #screenshot-btn:hover { background: rgba(40, 50, 70, 0.95); }
+
+    /* Cesium UI カスタマイズ */
+    .cesium-viewer-bottom { display: none !important; }
+    .cesium-viewer-toolbar { right: 60px !important; }
+  </style>
+</head>
+<body>
+
+  <!-- ローディング画面 -->
+  <div id="loading-overlay">
+    <div class="loading-spinner"></div>
+    <div class="loading-text">3Dマップを読み込み中...</div>
+  </div>
+
+  <!-- 3Dマップコンテナ -->
+  <div id="cesiumContainer"></div>
+
+  <!-- サイドパネル -->
+  <div id="sidebar">
+    <button id="sidebar-toggle" title="パネルの開閉">◀</button>
+
+    <div class="sidebar-header">
+      <h1>3Dマップビューア</h1>
+      <p>Google Earth データ対応 ・ KML / KMZ / GeoJSON</p>
+    </div>
+
+    <div class="sidebar-content">
+      <!-- 場所検索 -->
+      <div class="section">
+        <div class="section-title">&#128269; 場所を検索</div>
+        <div class="search-box">
+          <input type="text" id="searchInput" placeholder="地名・住所を入力..." />
+          <button id="searchBtn">検索</button>
+        </div>
+      </div>
+
+      <!-- プリセットエリア -->
+      <div class="section">
+        <div class="section-title">&#128204; プリセットエリア</div>
+        <div class="preset-grid" id="presetGrid"></div>
+      </div>
+
+      <!-- ファイルインポート -->
+      <div class="section">
+        <div class="section-title">&#128193; ファイルインポート</div>
+        <div class="file-drop-zone" id="dropZone">
+          <div class="icon">&#128206;</div>
+          <div class="text">ファイルをドラッグ＆ドロップ<br>またはクリックして選択</div>
+          <div class="formats">KML / KMZ / GeoJSON / CZML 対応</div>
+        </div>
+        <input type="file" id="fileInput" accept=".kml,.kmz,.json,.geojson,.czml" multiple />
+        <div class="import-list" id="importList"></div>
+      </div>
+
+      <!-- 表示設定 -->
+      <div class="section">
+        <div class="section-title">&#9881; 表示設定</div>
+
+        <div class="control-group">
+          <div class="control-label">地形の誇張 <span id="terrainValue">1.0x</span></div>
+          <input type="range" id="terrainExaggeration" min="0.5" max="10" step="0.5" value="1" />
+        </div>
+
+        <div class="toggle-row">
+          <label for="toggleTerrain">3D地形</label>
+          <div class="toggle-switch">
+            <input type="checkbox" id="toggleTerrain" checked />
+            <div class="toggle-slider"></div>
+          </div>
+        </div>
+
+        <div class="toggle-row">
+          <label for="toggleBuildings">3D建物</label>
+          <div class="toggle-switch">
+            <input type="checkbox" id="toggleBuildings" checked />
+            <div class="toggle-slider"></div>
+          </div>
+        </div>
+
+        <div class="toggle-row">
+          <label for="toggleShadows">影の表示</label>
+          <div class="toggle-switch">
+            <input type="checkbox" id="toggleShadows" />
+            <div class="toggle-slider"></div>
+          </div>
+        </div>
+
+        <div class="toggle-row">
+          <label for="toggleAtmosphere">大気効果</label>
+          <div class="toggle-switch">
+            <input type="checkbox" id="toggleAtmosphere" checked />
+            <div class="toggle-slider"></div>
+          </div>
+        </div>
+
+        <div class="toggle-row">
+          <label for="toggleFog">霧効果</label>
+          <div class="toggle-switch">
+            <input type="checkbox" id="toggleFog" checked />
+            <div class="toggle-slider"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 時間設定 -->
+      <div class="section">
+        <div class="section-title">&#9200; 時刻設定</div>
+        <div class="control-group">
+          <div class="control-label">時刻 <span id="timeValue">12:00</span></div>
+          <input type="range" id="timeSlider" min="0" max="24" step="0.5" value="12" />
+        </div>
+      </div>
+
+      <!-- アクション -->
+      <div class="section">
+        <div class="section-title">&#128736; アクション</div>
+        <div class="btn-row">
+          <button class="btn btn-primary" id="btnTopView">真上から</button>
+          <button class="btn" id="btnResetView">リセット</button>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-danger" id="btnClearAll">全データ削除</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 座標表示 -->
+  <div id="coords-display">
+    緯度: -- / 経度: -- / 高度: --
+  </div>
+
+  <!-- 情報パネル -->
+  <div id="info-panel"></div>
+
+  <!-- スクリーンショット -->
+  <button id="screenshot-btn" title="スクリーンショット">&#128247;</button>
+
+  <script>
+    // ============================================================
+    // Cesium Ion アクセストークン
+    // 無料アカウント: https://ion.cesium.com/signup/
+    // ============================================================
+    Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJlYjMzMzI3Yy01NzFjLTRjNDYtYjRkNS02ZDg3MGI1NWYxMTciLCJpZCI6MjU5LCJpYXQiOjE3MzQ0OTcxMTl9.pCMYXhsg-ixmVVSQfI1TiqTxkGBRLXVOqfiIq6OeSXs';
+
+    // ============================================================
+    // プリセットエリア
+    // ============================================================
+    const PRESETS = [
+      { name: '東京タワー', desc: '東京都港区', lon: 139.7454, lat: 35.6586, height: 800, heading: 20, pitch: -30 },
+      { name: '富士山', desc: '静岡県/山梨県', lon: 138.7274, lat: 35.3606, height: 15000, heading: 0, pitch: -25 },
+      { name: '大阪城', desc: '大阪府大阪市', lon: 135.5256, lat: 34.6873, height: 600, heading: -30, pitch: -25 },
+      { name: '厳島神社', desc: '広島県廿日市市', lon: 132.3198, lat: 34.2961, height: 500, heading: 10, pitch: -20 },
+      { name: '渋谷スクランブル', desc: '東京都渋谷区', lon: 139.7016, lat: 35.6595, height: 500, heading: 45, pitch: -30 },
+      { name: '金閣寺', desc: '京都府京都市', lon: 135.7292, lat: 35.0394, height: 400, heading: -15, pitch: -25 },
+      { name: '姫路城', desc: '兵庫県姫路市', lon: 134.6939, lat: 34.8394, height: 600, heading: 30, pitch: -20 },
+      { name: '那覇・首里城', desc: '沖縄県那覇市', lon: 127.7195, lat: 26.2170, height: 500, heading: 0, pitch: -25 },
+    ];
+
+    // ============================================================
+    // グローバル変数
+    // ============================================================
+    let viewer, osmBuildings, dataSources = [];
+
+    // ============================================================
+    // 初期化
+    // ============================================================
+    async function init() {
+      try {
+        viewer = new Cesium.Viewer('cesiumContainer', {
+          terrain: Cesium.Terrain.fromWorldTerrain(),
+          animation: false,
+          timeline: false,
+          fullscreenButton: false,
+          vrButton: false,
+          geocoder: false,
+          homeButton: false,
+          infoBox: true,
+          selectionIndicator: true,
+          navigationHelpButton: false,
+          sceneModePicker: true,
+          baseLayerPicker: true,
+          requestRenderMode: false,
+          maximumRenderTimeChange: Infinity,
+        });
+
+        // 3D建物 (OSM Buildings)
+        osmBuildings = await Cesium.createOsmBuildingsAsync();
+        viewer.scene.primitives.add(osmBuildings);
+
+        // 大気・霧の初期設定
+        viewer.scene.globe.enableLighting = true;
+        viewer.scene.fog.enabled = true;
+        viewer.scene.globe.showGroundAtmosphere = true;
+
+        // 初期視点（日本上空）
+        viewer.camera.flyTo({
+          destination: Cesium.Cartesian3.fromDegrees(139.0, 36.0, 500000),
+          orientation: { heading: Cesium.Math.toRadians(0), pitch: Cesium.Math.toRadians(-45), roll: 0 },
+          duration: 0,
+        });
+
+        setupEventHandlers();
+        buildPresetButtons();
+        hideLoading();
+      } catch (err) {
+        console.error('初期化エラー:', err);
+        document.querySelector('.loading-text').textContent =
+          'エラーが発生しました。ページを再読み込みしてください。';
+      }
+    }
+
+    // ============================================================
+    // UIイベント
+    // ============================================================
+    function setupEventHandlers() {
+      // サイドバートグル
+      document.getElementById('sidebar-toggle').addEventListener('click', () => {
+        const sb = document.getElementById('sidebar');
+        sb.classList.toggle('collapsed');
+        document.getElementById('sidebar-toggle').textContent = sb.classList.contains('collapsed') ? '▶' : '◀';
+      });
+
+      // 検索
+      document.getElementById('searchBtn').addEventListener('click', doSearch);
+      document.getElementById('searchInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
+
+      // ファイルインポート
+      const dropZone = document.getElementById('dropZone');
+      const fileInput = document.getElementById('fileInput');
+      dropZone.addEventListener('click', () => fileInput.click());
+      dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+      dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+      dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        handleFiles(e.dataTransfer.files);
+      });
+      fileInput.addEventListener('change', (e) => handleFiles(e.target.files));
+
+      // 地形の誇張
+      document.getElementById('terrainExaggeration').addEventListener('input', (e) => {
+        const val = parseFloat(e.target.value);
+        document.getElementById('terrainValue').textContent = val.toFixed(1) + 'x';
+        viewer.scene.verticalExaggeration = val;
+      });
+
+      // トグル
+      document.getElementById('toggleTerrain').addEventListener('change', (e) => {
+        viewer.scene.globe.depthTestAgainstTerrain = e.target.checked;
+        if (e.target.checked) {
+          viewer.scene.setTerrain(Cesium.Terrain.fromWorldTerrain());
+        } else {
+          viewer.scene.setTerrain(new Cesium.Terrain(Cesium.EllipsoidTerrainProvider.fromUrl('data:,')));
+        }
+      });
+
+      document.getElementById('toggleBuildings').addEventListener('change', (e) => {
+        osmBuildings.show = e.target.checked;
+      });
+
+      document.getElementById('toggleShadows').addEventListener('change', (e) => {
+        viewer.shadows = e.target.checked;
+      });
+
+      document.getElementById('toggleAtmosphere').addEventListener('change', (e) => {
+        viewer.scene.globe.showGroundAtmosphere = e.target.checked;
+        viewer.scene.skyAtmosphere.show = e.target.checked;
+      });
+
+      document.getElementById('toggleFog').addEventListener('change', (e) => {
+        viewer.scene.fog.enabled = e.target.checked;
+      });
+
+      // 時刻スライダー
+      document.getElementById('timeSlider').addEventListener('input', (e) => {
+        const hours = parseFloat(e.target.value);
+        const h = Math.floor(hours);
+        const m = Math.round((hours - h) * 60);
+        document.getElementById('timeValue').textContent =
+          String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+        const now = new Date();
+        now.setUTCHours(h - 9, m, 0, 0); // JST -> UTC
+        viewer.clock.currentTime = Cesium.JulianDate.fromDate(now);
+        viewer.clock.shouldAnimate = false;
+      });
+
+      // アクションボタン
+      document.getElementById('btnTopView').addEventListener('click', () => {
+        const pos = viewer.camera.positionCartographic;
+        viewer.camera.flyTo({
+          destination: Cesium.Cartesian3.fromRadians(pos.longitude, pos.latitude, pos.height),
+          orientation: { heading: 0, pitch: Cesium.Math.toRadians(-90), roll: 0 },
+          duration: 1.5,
+        });
+      });
+
+      document.getElementById('btnResetView').addEventListener('click', () => {
+        viewer.camera.flyTo({
+          destination: Cesium.Cartesian3.fromDegrees(139.0, 36.0, 500000),
+          orientation: { heading: 0, pitch: Cesium.Math.toRadians(-45), roll: 0 },
+          duration: 2,
+        });
+      });
+
+      document.getElementById('btnClearAll').addEventListener('click', () => {
+        if (confirm('インポートした全データを削除しますか？')) {
+          dataSources.forEach(ds => viewer.dataSources.remove(ds, true));
+          dataSources = [];
+          document.getElementById('importList').innerHTML = '';
+          showInfo('全データを削除しました');
+        }
+      });
+
+      // スクリーンショット
+      document.getElementById('screenshot-btn').addEventListener('click', takeScreenshot);
+
+      // マウス座標表示
+      const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+      handler.setInputAction((movement) => {
+        const cartesian = viewer.camera.pickEllipsoid(movement.endPosition, viewer.scene.globe.ellipsoid);
+        if (cartesian) {
+          const carto = Cesium.Cartographic.fromCartesian(cartesian);
+          const lon = Cesium.Math.toDegrees(carto.longitude).toFixed(5);
+          const lat = Cesium.Math.toDegrees(carto.latitude).toFixed(5);
+          const alt = viewer.camera.positionCartographic.height.toFixed(0);
+          document.getElementById('coords-display').textContent =
+            `緯度: ${lat} / 経度: ${lon} / 高度: ${alt}m`;
+        }
+      }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+    }
+
+    // ============================================================
+    // プリセットボタン生成
+    // ============================================================
+    function buildPresetButtons() {
+      const grid = document.getElementById('presetGrid');
+      PRESETS.forEach(p => {
+        const btn = document.createElement('button');
+        btn.className = 'preset-btn';
+        btn.innerHTML = `<div class="preset-name">${p.name}</div><div class="preset-desc">${p.desc}</div>`;
+        btn.addEventListener('click', () => flyToPreset(p));
+        grid.appendChild(btn);
+      });
+    }
+
+    function flyToPreset(p) {
+      viewer.camera.flyTo({
+        destination: Cesium.Cartesian3.fromDegrees(p.lon, p.lat, p.height),
+        orientation: {
+          heading: Cesium.Math.toRadians(p.heading),
+          pitch: Cesium.Math.toRadians(p.pitch),
+          roll: 0,
+        },
+        duration: 2,
+      });
+      showInfo(`${p.name}（${p.desc}）に移動中...`);
+    }
+
+    // ============================================================
+    // 場所検索 (Nominatim OpenStreetMap)
+    // ============================================================
+    async function doSearch() {
+      const query = document.getElementById('searchInput').value.trim();
+      if (!query) return;
+
+      showInfo('検索中...');
+      try {
+        const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`;
+        const resp = await fetch(url, { headers: { 'Accept-Language': 'ja' } });
+        const data = await resp.json();
+        if (data.length === 0) {
+          showInfo('場所が見つかりませんでした');
+          return;
+        }
+        const result = data[0];
+        const lon = parseFloat(result.lon);
+        const lat = parseFloat(result.lat);
+        viewer.camera.flyTo({
+          destination: Cesium.Cartesian3.fromDegrees(lon, lat, 1500),
+          orientation: {
+            heading: Cesium.Math.toRadians(0),
+            pitch: Cesium.Math.toRadians(-35),
+            roll: 0,
+          },
+          duration: 2,
+        });
+        showInfo(`${result.display_name}`);
+      } catch (err) {
+        showInfo('検索エラー: ' + err.message);
+      }
+    }
+
+    // ============================================================
+    // ファイルインポート
+    // ============================================================
+    async function handleFiles(files) {
+      for (const file of files) {
+        try {
+          showInfo(`${file.name} を読み込み中...`);
+          let ds;
+          const ext = file.name.split('.').pop().toLowerCase();
+
+          if (ext === 'kml') {
+            const text = await file.text();
+            const parser = new DOMParser();
+            const kmlDoc = parser.parseFromString(text, 'application/xml');
+            ds = await Cesium.KmlDataSource.load(kmlDoc, {
+              camera: viewer.scene.camera,
+              canvas: viewer.scene.canvas,
+              clampToGround: true,
+            });
+          } else if (ext === 'kmz') {
+            ds = await Cesium.KmlDataSource.load(file, {
+              camera: viewer.scene.camera,
+              canvas: viewer.scene.canvas,
+              clampToGround: true,
+            });
+          } else if (ext === 'json' || ext === 'geojson') {
+            const text = await file.text();
+            const json = JSON.parse(text);
+            ds = await Cesium.GeoJsonDataSource.load(json, {
+              clampToGround: true,
+              stroke: Cesium.Color.DODGERBLUE,
+              fill: Cesium.Color.DODGERBLUE.withAlpha(0.3),
+              strokeWidth: 2,
+            });
+          } else if (ext === 'czml') {
+            const text = await file.text();
+            const czml = JSON.parse(text);
+            ds = await Cesium.CzmlDataSource.load(czml);
+          } else {
+            showInfo(`未対応の形式: ${ext}`);
+            continue;
+          }
+
+          viewer.dataSources.add(ds);
+          dataSources.push(ds);
+          addImportItem(file.name, ds);
+          viewer.flyTo(ds, { duration: 2 });
+          showInfo(`${file.name} を読み込みました`);
+        } catch (err) {
+          console.error('ファイル読み込みエラー:', err);
+          showInfo(`エラー: ${file.name} - ${err.message}`);
+        }
+      }
+    }
+
+    function addImportItem(name, ds) {
+      const list = document.getElementById('importList');
+      const item = document.createElement('div');
+      item.className = 'import-item';
+      item.innerHTML = `<span class="name" title="${name}">${name}</span><button class="remove-btn" title="削除">&times;</button>`;
+      item.querySelector('.name').addEventListener('click', () => viewer.flyTo(ds, { duration: 1.5 }));
+      item.querySelector('.remove-btn').addEventListener('click', () => {
+        viewer.dataSources.remove(ds, true);
+        dataSources = dataSources.filter(d => d !== ds);
+        item.remove();
+        showInfo(`${name} を削除しました`);
+      });
+      list.appendChild(item);
+    }
+
+    // ============================================================
+    // スクリーンショット
+    // ============================================================
+    function takeScreenshot() {
+      viewer.render();
+      const canvas = viewer.scene.canvas;
+      const link = document.createElement('a');
+      link.download = '3dmap_screenshot_' + new Date().toISOString().slice(0, 19).replace(/:/g, '') + '.png';
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+      showInfo('スクリーンショットを保存しました');
+    }
+
+    // ============================================================
+    // 情報パネル
+    // ============================================================
+    let infoTimeout;
+    function showInfo(message) {
+      const panel = document.getElementById('info-panel');
+      panel.textContent = message;
+      panel.classList.add('visible');
+      clearTimeout(infoTimeout);
+      infoTimeout = setTimeout(() => panel.classList.remove('visible'), 3000);
+    }
+
+    // ============================================================
+    // ローディング非表示
+    // ============================================================
+    function hideLoading() {
+      const overlay = document.getElementById('loading-overlay');
+      overlay.classList.add('hidden');
+      setTimeout(() => overlay.remove(), 500);
+    }
+
+    // ============================================================
+    // 起動
+    // ============================================================
+    init();
+  </script>
+</body>
+</html>
